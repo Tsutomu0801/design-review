@@ -20,6 +20,22 @@ function getKeys() {
   });
 }
 
+function forgetKeys() {
+  return new Promise(resolve => {
+    const open = indexedDB.open('comps-keys', 1);
+    open.onsuccess = () => { const t = open.result.transaction('keys', 'readwrite'); t.objectStore('keys').delete('k'); t.oncomplete = resolve; t.onerror = resolve; };
+    open.onerror = resolve;
+  });
+}
+
+async function keyWorks(keys) {
+  try {
+    const buf = await (await fetch(new URL('check.bin', BASE), { cache: 'no-store' })).arrayBuffer();
+    await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, keys.enc, buf.slice(12));
+    return true;
+  } catch { return false; }
+}
+
 // Keep the last few decrypted files: <video> asks for many byte ranges of the same file
 const memo = new Map();
 async function decrypted(rel, keys) {
@@ -45,8 +61,12 @@ self.addEventListener('fetch', e => {
     }
     let rel = decodeURIComponent(url.pathname.slice(SITE.length));
     if (rel === '' || rel.endsWith('/')) rel += 'index.html';
-    const body = await decrypted(rel, keys);
-    if (!body) return new Response('not found', { status: 404 });
+    // A key from an older password either fails to decrypt or names files that no longer exist:
+    // forget it and ask for the password again
+    const relogin = async () => { await forgetKeys(); return e.request.mode === 'navigate' ? Response.redirect(BASE.href, 302) : new Response('', { status: 401 }); };
+    let body;
+    try { body = await decrypted(rel, keys); } catch { return relogin(); }
+    if (!body) return (await keyWorks(keys)) ? new Response('not found', { status: 404 }) : relogin();
     const type = TYPES[rel.split('.').pop().toLowerCase()] || 'application/octet-stream';
     const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
     const range = /bytes=(\d*)-(\d*)/.exec(e.request.headers.get('range') || '');
