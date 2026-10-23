@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<title>デザイン案｜株式会社HLT</title>
+<script>
+// GitHub Pages serves this for any path it does not have, e.g. a page under site/ opened before
+// the service worker is installed. Send the visitor to the password page and come back afterwards.
+(() => {
+  const seg = location.pathname.split('/').filter(Boolean);
+  const base = `/${seg[0] || ''}/`.replace('//', '/');
+  const rest = location.pathname.slice(base.length);
+  location.replace(base + (rest.startsWith('site/') ? `?next=${encodeURIComponent(rest + location.search + location.hash)}` : ''));
+})();
+</script>
+</head>
+<body></body>
+</html>

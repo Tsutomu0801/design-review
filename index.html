@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>デザイン案｜株式会社HLT</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 24px 16px; background: #f6f6f4; color: #222; font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  main { width: 100%; max-width: 400px; background: #fff; border: 1px solid #e3e3e3; border-radius: 8px; padding: 40px 32px 32px; }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .04em; }
+  p.by { margin: 0 0 28px; font-size: 14px; color: #666; }
+  label { display: block; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  .row { display: flex; gap: 8px; }
+  input, button { height: 48px; border-radius: 6px; font: inherit; font-size: 16px; }
+  input { flex: 1; min-width: 0; padding: 0 14px; border: 1px solid #c9c9c9; font-family: ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: .04em; }
+  input:focus { outline: 2px solid #222; outline-offset: 1px; }
+  button { flex: none; padding: 0 20px; border: 0; background: #222; color: #fff; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .msg { min-height: 24px; margin: 12px 0 0; font-size: 14px; color: #b3261e; transition: opacity .25s ease; }
+  .msg.is-hidden { opacity: 0; transition: none; }
+  .msg.is-busy { color: #666; }
+</style>
+</head>
+<body>
+<main>
+  <h1>デザイン案</h1>
+  <p class="by">株式会社HLT</p>
+  <form id="f" autocomplete="off">
+    <label for="pw">パスワード</label>
+    <div class="row">
+      <input id="pw" type="password" autocomplete="current-password" spellcheck="false" required autofocus>
+      <button id="go" type="submit">開く</button>
+    </div>
+    <p class="msg" id="msg" role="status" aria-live="polite"></p>
+  </form>
+</main>
+<script>
+(() => {
+  const DAYS = 14;
+  const $ = id => document.getElementById(id);
+  // fade each new message in
+  const say = (t, busy) => { const m = $('msg'); m.classList.add('is-hidden'); m.textContent = t; m.classList.toggle('is-busy', !!busy); requestAnimationFrame(() => requestAnimationFrame(() => m.classList.remove('is-hidden'))); };
+  const db = () => new Promise((res, rej) => { const o = indexedDB.open('comps-keys', 1); o.onupgradeneeded = () => o.result.createObjectStore('keys'); o.onsuccess = () => res(o.result); o.onerror = () => rej(o.error); });
+  const store = async v => { const d = await db(); await new Promise((res, rej) => { const t = d.transaction('keys', 'readwrite'); t.objectStore('keys').put(v, 'k'); t.oncomplete = res; t.onerror = () => rej(t.error); }); };
+  const load = async () => { const d = await db(); return new Promise(res => { const r = d.transaction('keys').objectStore('keys').get('k'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); }); };
+  const hexBytes = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+
+  if (!('serviceWorker' in navigator) || !window.indexedDB || !crypto.subtle) {
+    say('このブラウザでは開けません。Chrome・Safari・Edgeの通常のウィンドウで開いてください。');
+    $('go').disabled = true;
+    return;
+  }
+  const ready = navigator.serviceWorker.register('sw.js', { scope: './' }).then(() => navigator.serviceWorker.ready);
+  // Back to the page the visitor first asked for (only paths inside site/)
+  const next = new URLSearchParams(location.search).get('next') || '';
+  const target = /^site\/[\w\-./]*(\?[\w=&]*)?(#[\w-]*)?$/.test(next) && !next.includes('..') ? next : 'site/';
+  const enter = async () => { await ready; location.replace(target); };
+
+  // Already unlocked in this browser
+  load().then(k => { if (k && k.exp > Date.now()) enter(); }).catch(() => {});
+
+  $('f').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('go').disabled = true;
+    say('確認しています…', true);
+    try {
+      const { salt, iterations } = await (await fetch('auth.json', { cache: 'no-store' })).json();
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode($('pw').value.trim()), 'PBKDF2', false, ['deriveBits']);
+      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: hexBytes(salt), iterations }, base, 512));
+      const enc = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['decrypt']);
+      const mac = await crypto.subtle.importKey('raw', bits.slice(32), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+      const buf = await (await fetch('check.bin', { cache: 'no-store' })).arrayBuffer();
+      try { await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, enc, buf.slice(12)); }
+      catch { say('パスワードが違います。'); $('go').disabled = false; $('pw').select(); return; }
+      await store({ enc, mac, exp: Date.now() + DAYS * 864e5 });
+      say('開いています…', true);
+      await enter();
+    } catch (err) {
+      say('開けませんでした。ページを再読み込みしてもう一度お試しください。');
+      $('go').disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
